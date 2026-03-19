@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "AiEYE Browser",
-  "version": "6.0",
+  "version": "7.0",
   "permissions": [
     "sidePanel",
     "activeTab",
     "scripting",
-    "tabs"
+    "tabs",
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -17,7 +18,34 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+  "options_page": "settings.html",
   "action": {
-    "default_title": "Open Commander"
+    "default_title": "Open A-Eye"
+  },
+  "commands": {
+    "open-side-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+Q"
+      },
+      "description": "Open the A-Eye side panel"
+    },
+    "toggle-ai-mode": {
+      "suggested_key": {
+        "default": "Alt+Shift+1"
+      },
+      "description": "Toggle between Cloud and Local AI"
+    },
+    "toggle-voice": {
+      "suggested_key": {
+        "default": "Alt+Shift+2"
+      },
+      "description": "Start or stop voice listening"
+    },
+    "repeat-response": {
+      "suggested_key": {
+        "default": "Alt+Shift+3"
+      },
+      "description": "Repeat the last AI response"
+    }
   }
 }
