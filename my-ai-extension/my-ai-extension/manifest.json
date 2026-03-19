@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "AiEYE Browser",
+  "version": "6.0",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Commander"
+  }
+}
