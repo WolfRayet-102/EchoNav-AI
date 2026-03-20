@@ -479,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function handleScreenshot(prompt) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-    if (tab.url.startsWith('chrome://')) {
+    if (!tab.url || tab.url.startsWith('chrome://')) {
       speak('I cannot capture system pages.');
       return;
     }
@@ -494,8 +494,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
       log('Screenshot captured.', 'system', dataUrl);
 
+      // Screenshots require a vision-capable model.
+      // Local AI (Ollama) and Mistral do not support image input.
       if (settings.useLocalAI) {
-        speak('Screenshot analysis requires Cloud AI. Please switch to Gemini in settings.');
+        speak('Screenshot analysis requires Cloud AI with Gemini. Please switch to Gemini in settings.');
+        log('Switch to Gemini in Settings to analyse screenshots.', 'system');
+        return;
+      }
+
+      if (settings.cloudProvider === 'mistral') {
+        speak('Screenshot analysis is only supported with Gemini, not Mistral. Please switch providers in settings.');
+        log('Switch to Gemini in Settings to analyse screenshots — Mistral does not support image input.', 'system');
+        return;
+      }
+
+      if (!settings.geminiKey) {
+        speak('Please add your Gemini API key in settings to analyse screenshots.');
+        log('No Gemini API key found. Open Settings to add one.', 'system');
         return;
       }
 
@@ -507,14 +522,21 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({
           contents: [{
             parts: [
-              { text: `Describe this screenshot for a blind user. ${prompt}` },
+              { text: `Describe this screenshot clearly and in detail for a blind user who cannot see it. ${prompt}` },
               { inline_data: { mime_type: 'image/jpeg', data: dataUrl.split(',')[1] } }
             ]
           }]
         })
       });
 
-      const data   = await response.json();
+      const data = await response.json();
+
+      // Check for API-level errors (bad key, quota exceeded, etc.)
+      if (!data.candidates || !data.candidates[0]) {
+        const reason = data.error?.message || 'Unknown error from Gemini API.';
+        throw new Error(reason);
+      }
+
       const aiText = data.candidates[0].content.parts[0].text;
       lastResponse = aiText;
 
@@ -522,7 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
       speak(aiText);
 
     } catch (e) {
-      speak('Error capturing screen.');
+      speak('Sorry, I could not analyse the screenshot. Please check your Gemini API key in settings.');
       log(`Screenshot error: ${e.message}`, 'system');
     }
   }
