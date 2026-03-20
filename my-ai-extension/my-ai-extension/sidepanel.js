@@ -37,29 +37,40 @@ document.addEventListener('DOMContentLoaded', () => {
   // settings lives inside this callback.
   // ══════════════════════════════════════════════════════════════════════
 
+  // Load settings THEN set up everything that depends on them
   chrome.storage.sync.get({
-    // These are the DEFAULT values used if nothing has been saved yet.
-    // A first-time user will get these automatically.
-    useLocalAI:  false,
-    geminiKey:   '',
-    geminiModel: 'gemini-2.0-flash',
-    ollamaUrl:   'http://localhost:11434',
-    ollamaModel: 'gemma3:4b',
-    voiceSpeed:  1.1,
+    useLocalAI:    false,
+    cloudProvider: 'mistral',
+    geminiKey:     '',
+    geminiModel:   'gemini-2.0-flash',
+    mistralKey:    '',
+    mistralModel:  'mistral-small-latest',
+    ollamaUrl:     'http://localhost:11434',
+    ollamaModel:   'gemma3:4b',
+    voiceSpeed:    1.1,
   }, (loaded) => {
+    // Copy every loaded value into the settings object
     settings = loaded;
 
-    // Update the mode label in the settings button
+    // Debug line — remove this once it's working
+    console.log('Settings loaded:', JSON.stringify(settings, null, 2));
+
+    // Update the mode label
     modeLabel.textContent = settings.useLocalAI ? 'Local AI' : 'Cloud AI';
 
-    // Warn the user if no API key has been set yet
+    // Check if any key exists
     const hasKey = settings.useLocalAI || settings.geminiKey || settings.mistralKey;
 
+    console.log('Has key:', hasKey);
+    console.log('Provider:', settings.cloudProvider);
+    console.log('Mistral key exists:', !!settings.mistralKey);
+
     if (!hasKey) {
-        log('⚙️ No API key found. Click Settings to add your Mistral or Gemini key.', 'system');
+      log('⚙️ No API key found. Click Settings to add your Mistral or Gemini key.', 'system');
     } else {
-        log('Ready. Click the mic button or press Alt+Shift+2 to speak.', 'system');
+      log(`Ready. Using ${settings.cloudProvider}. Click the mic or press Alt+Shift+2.`, 'system');
     }
+  });
 
 
   // ══════════════════════════════════════════════════════════════════════
@@ -309,57 +320,67 @@ Action definitions:
   // It classifies intent then routes to the right action function.
   // ══════════════════════════════════════════════════════════════════════
 
-  async function processVoiceInput(rawText) {
+async function processVoiceInput(rawText) {
     if (!rawText || !rawText.trim()) return;
 
     log(`You: ${rawText}`, 'user');
 
-    // Check settings are loaded before doing anything
+    // Reload settings fresh from storage every time
+    // This guarantees we always have the latest saved values
+    await new Promise((resolve) => {
+      chrome.storage.sync.get({
+        useLocalAI:    false,
+        cloudProvider: 'mistral',
+        geminiKey:     '',
+        geminiModel:   'gemini-2.0-flash',
+        mistralKey:    '',
+        mistralModel:  'mistral-small-latest',
+        ollamaUrl:     'http://localhost:11434',
+        ollamaModel:   'gemma3:4b',
+        voiceSpeed:    1.1,
+      }, (loaded) => {
+        settings = loaded;
+        resolve();
+      });
+    });
+
+    console.log('Processing with settings:', settings.cloudProvider, settings.mistralKey ? 'key exists' : 'NO KEY');
+
     const hasKey = settings.useLocalAI || settings.geminiKey || settings.mistralKey;
 
     if (!hasKey) {
-        speak('Please open settings and add your API key first.');
-        log('⚙️ Open Settings to add your API key.', 'system');
-    return;
+      speak('Please open settings and add your API key first.');
+      log('⚙️ Open Settings to add your API key.', 'system');
+      return;
     }
 
-    // Ask the AI what the user wants to do
+    // Rest of the function continues unchanged from here...
     const intent = await classifyIntent(rawText);
 
-    // Route to the right function based on classified intent
     switch (intent.action) {
-
       case 'navigate':
         await handleNavigate(intent.target || rawText);
         break;
-
       case 'read_page':
         await handleReadPage();
         break;
-
       case 'screenshot':
         await handleScreenshot(rawText);
         break;
-
       case 'click':
         await handleClick(intent.target || rawText);
         break;
-
       case 'scroll':
         await handleScroll(intent.target || 'down');
         break;
-
       case 'fill_form':
         await handleFillForm(rawText);
         break;
-
       case 'search':
         await handleSearch(intent.target || rawText);
         break;
-
       case 'chat':
       default:
-        // Plain conversation — send to AI and speak the response
         const response = await callAI(rawText);
         if (response) {
           log(response, 'ai');
@@ -853,4 +874,3 @@ Action definitions:
   });
 
 });
-})
