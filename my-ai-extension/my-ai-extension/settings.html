@@ -225,7 +225,7 @@
     <div class="toggle-row">
       <div class="toggle-label">
         Use Local AI (Ollama)
-        <span>Off = Cloud (Gemini) &nbsp;·&nbsp; On = Local (private)</span>
+        <span>Off = Cloud (Gemini / Mistral) &nbsp;·&nbsp; On = Local (private)</span>
       </div>
       <label class="switch">
         <input type="checkbox" id="toggle-local">
@@ -233,7 +233,8 @@
       </label>
     </div>
 
-    <<!-- ── CLOUD AI ───────────────────────────────── -->
+    <!-- FIX: removed stray '<' character that was breaking HTML parsing -->
+    <!-- ── CLOUD AI ───────────────────────────────── -->
     <div id="cloud-section">
       <div class="section-title">Cloud AI Provider</div>
 

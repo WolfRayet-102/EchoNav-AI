@@ -30,7 +30,6 @@ function updateSections() {
 }
 
 // ── Show/hide Gemini vs Mistral fields ───────────────────────────────────
-// Runs whenever the provider dropdown changes
 function updateProviderFields() {
   if (cloudProvider.value === 'mistral') {
     mistralFields.style.display = 'block';
@@ -52,6 +51,8 @@ voiceSpeed.addEventListener('input', () => {
 
 
 // ── LOAD saved settings ──────────────────────────────────────────────────
+// FIX #5: cloudProvider default changed from 'gemini' to 'gemini' (was
+// 'mistral' in sidepanel.js) — now both files agree on 'gemini' as default.
 chrome.storage.sync.get({
   useLocalAI:    false,
   cloudProvider: 'gemini',
@@ -63,15 +64,15 @@ chrome.storage.sync.get({
   ollamaModel:   'gemma3:4b',
   voiceSpeed:    1.1,
 }, (s) => {
-  toggleLocal.checked    = s.useLocalAI;
-  cloudProvider.value    = s.cloudProvider;
-  geminiKey.value        = s.geminiKey;
-  geminiModel.value      = s.geminiModel;
-  mistralKey.value       = s.mistralKey;
-  mistralModel.value     = s.mistralModel;
-  ollamaUrl.value        = s.ollamaUrl;
-  ollamaModel.value      = s.ollamaModel;
-  voiceSpeed.value       = s.voiceSpeed;
+  toggleLocal.checked      = s.useLocalAI;
+  cloudProvider.value      = s.cloudProvider;
+  geminiKey.value          = s.geminiKey;
+  geminiModel.value        = s.geminiModel;
+  mistralKey.value         = s.mistralKey;
+  mistralModel.value       = s.mistralModel;
+  ollamaUrl.value          = s.ollamaUrl;
+  ollamaModel.value        = s.ollamaModel;
+  voiceSpeed.value         = s.voiceSpeed;
   speedDisplay.textContent = parseFloat(s.voiceSpeed).toFixed(1) + 'x';
 
   updateSections();
@@ -82,7 +83,6 @@ chrome.storage.sync.get({
 // ── SAVE settings ────────────────────────────────────────────────────────
 btnSave.addEventListener('click', () => {
 
-  // Validate — make sure the right key is filled for the chosen provider
   if (!toggleLocal.checked) {
     if (cloudProvider.value === 'gemini' && !geminiKey.value.trim()) {
       showStatus('Please enter your Gemini API key.', 'err');

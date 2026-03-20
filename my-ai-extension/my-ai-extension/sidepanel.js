@@ -5,21 +5,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ══════════════════════════════════════════════════════════════════════
   // 1. STATE
-  // These variables hold the "memory" of the extension while it's open.
-  // They live in RAM — they reset every time the side panel is closed.
   // ══════════════════════════════════════════════════════════════════════
 
-  let settings     = {};    // Loaded from chrome.storage — API keys, preferences
-  let isListening  = false; // Is the mic currently active?
-  let recognition  = null;  // The Web Speech API recognition object
-  let lastResponse = '';    // The last thing the AI said (for the repeat shortcut)
-  let chatHistory  = [];    // Full conversation history sent to the AI every turn
+  let settings     = {};
+  let isListening  = false;
+  let recognition  = null;
+  let lastResponse = '';
+  let chatHistory  = [];
 
 
   // ══════════════════════════════════════════════════════════════════════
   // 2. DOM ELEMENTS
-  // Getting references to HTML elements once at the top is better than
-  // calling document.getElementById() repeatedly throughout the code.
   // ══════════════════════════════════════════════════════════════════════
 
   const chat        = document.getElementById('chat-container');
@@ -32,15 +28,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ══════════════════════════════════════════════════════════════════════
   // 3. INITIALISATION
-  // The first thing that runs. Loads settings from storage before
-  // allowing anything else to happen. Everything that depends on
-  // settings lives inside this callback.
   // ══════════════════════════════════════════════════════════════════════
 
-  // Load settings THEN set up everything that depends on them
   chrome.storage.sync.get({
     useLocalAI:    false,
-    cloudProvider: 'mistral',
+    cloudProvider: 'gemini',       // FIX #5: was 'mistral' here, 'gemini' in settings.js — now unified
     geminiKey:     '',
     geminiModel:   'gemini-2.0-flash',
     mistralKey:    '',
@@ -49,21 +41,12 @@ document.addEventListener('DOMContentLoaded', () => {
     ollamaModel:   'gemma3:4b',
     voiceSpeed:    1.1,
   }, (loaded) => {
-    // Copy every loaded value into the settings object
     settings = loaded;
-
-    // Debug line — remove this once it's working
-    console.log('Settings loaded:', JSON.stringify(settings, null, 2));
-
-    // Update the mode label
     modeLabel.textContent = settings.useLocalAI ? 'Local AI' : 'Cloud AI';
 
-    // Check if any key exists
-    const hasKey = settings.useLocalAI || settings.geminiKey || settings.mistralKey;
-
-    console.log('Has key:', hasKey);
-    console.log('Provider:', settings.cloudProvider);
-    console.log('Mistral key exists:', !!settings.mistralKey);
+    const hasKey = settings.useLocalAI
+      ? !!settings.ollamaUrl
+      : (settings.cloudProvider === 'mistral' ? !!settings.mistralKey : !!settings.geminiKey);
 
     if (!hasKey) {
       log('⚙️ No API key found. Click Settings to add your Mistral or Gemini key.', 'system');
@@ -75,19 +58,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ══════════════════════════════════════════════════════════════════════
   // 4. LOGGING
-  // Adds a message bubble to the chat window.
-  // type can be: 'user', 'ai', or 'system'
-  // imageSrc is optional — pass a base64 image to show a screenshot
   // ══════════════════════════════════════════════════════════════════════
 
   function log(text, type, imageSrc = null) {
     const div = document.createElement('div');
     div.className = `message ${type}`;
-
-    // Convert **bold** markdown to real HTML bold tags
     div.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
 
-    // If an image was passed in, attach it below the text
     if (imageSrc) {
       const img = document.createElement('img');
       img.src = imageSrc;
@@ -95,27 +72,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     chat.appendChild(div);
-
-    // Auto-scroll to the bottom so the latest message is always visible
     chat.scrollTop = chat.scrollHeight;
   }
 
 
   // ══════════════════════════════════════════════════════════════════════
   // 5. TEXT TO SPEECH
-  // Converts text to spoken audio using the browser's built-in
-  // Web Speech Synthesis API. No external service needed.
   // ══════════════════════════════════════════════════════════════════════
 
   function speak(text) {
     if (!text) return;
-
-    // Cancel anything currently being spoken before starting new speech.
-    // Without this, multiple speak() calls would queue up and overlap.
     window.speechSynthesis.cancel();
 
-    // Remove markdown symbols that would sound weird when read aloud.
-    // e.g. "**hello**" becomes "hello", backticks are removed etc.
     const cleanText = text
       .replace(/[*#_`]/g, '')
       .replace(/```[\s\S]*?```/g, 'code block')
@@ -123,35 +91,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang  = 'en-US';
-
-    // Use the speed from settings — user can adjust this in the settings page
     utterance.rate  = settings.voiceSpeed || 1.1;
-
     window.speechSynthesis.speak(utterance);
   }
 
 
   // ══════════════════════════════════════════════════════════════════════
   // 6. AI — CORE FUNCTION
-  // The single function that handles ALL communication with the AI,
-  // whether that's Gemini (cloud) or Ollama (local).
-  //
-  // It sends the FULL conversation history every time so the AI always
-  // has context of what was said before. This is how memory works —
-  // AI models are stateless, so you rebuild the context on every call.
+  // FIX #3: Added full Mistral support in the cloud path.
+  // Previously the else branch only ever called Gemini regardless of
+  // the cloudProvider setting.
   // ══════════════════════════════════════════════════════════════════════
 
   async function callAI(userMessage) {
-
-    // Add user's message to the history before sending
     chatHistory.push({ role: 'user', content: userMessage });
 
-    // Show a loading indicator while waiting for the response
     const loadingDiv = document.createElement('div');
     loadingDiv.className = 'message ai';
     loadingDiv.textContent = '...';
     chat.appendChild(loadingDiv);
     chat.scrollTop = chat.scrollHeight;
+
+    const SYSTEM_PROMPT = `You are A-Eye, an accessibility voice assistant built 
+    into the Chrome browser for blind and visually impaired users. 
+    You help users navigate the web, read page content, and perform 
+    browser actions entirely by voice. Be concise, warm, and clear. 
+    Never use visual language like "as you can see" or "look at this".`;
 
     try {
       let responseText = '';
@@ -159,40 +124,53 @@ document.addEventListener('DOMContentLoaded', () => {
       if (settings.useLocalAI) {
 
         // ── LOCAL PATH: Ollama ────────────────────────────────────────
-        // Ollama runs on the user's machine at a local port.
-        // It uses an OpenAI-compatible API format.
-        // Nothing leaves the user's computer on this path.
         const response = await fetch(`${settings.ollamaUrl}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: settings.ollamaModel,
             messages: [
-              {
-                // The system prompt defines the AI's personality and role.
-                // This message is always sent first, before any conversation.
-                role: 'system',
-                content: `You are A-Eye, an accessibility voice assistant built 
-                into the Chrome browser for blind and visually impaired users. 
-                You help users navigate the web, read page content, and perform 
-                browser actions entirely by voice. Be concise, warm, and clear. 
-                Never use visual language like "as you can see" or "look at this".`
-              },
-              ...chatHistory   // Spread all previous messages after the system prompt
+              { role: 'system', content: SYSTEM_PROMPT },
+              ...chatHistory
             ],
-            stream: false      // Get the full response at once, not chunk by chunk
+            stream: false
           })
         });
 
         const data = await response.json();
         responseText = data.message.content;
 
+      } else if (settings.cloudProvider === 'mistral') {
+
+        // ── CLOUD PATH: Mistral ───────────────────────────────────────
+        // FIX #3: This entire branch was missing. Mistral uses an
+        // OpenAI-compatible messages format with a system role message.
+        const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${settings.mistralKey}`
+          },
+          body: JSON.stringify({
+            model: settings.mistralModel,
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              ...chatHistory
+            ]
+          })
+        });
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0]) {
+          throw new Error(data.error?.message || 'No response from Mistral.');
+        }
+
+        responseText = data.choices[0].message.content;
+
       } else {
 
         // ── CLOUD PATH: Gemini ────────────────────────────────────────
-        // Gemini's API format is slightly different from OpenAI's.
-        // Roles are "user" and "model" (not "assistant").
-        // The system prompt is passed separately, not as a message.
         const geminiMessages = chatHistory.map(msg => ({
           role: msg.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: msg.content }]
@@ -204,15 +182,8 @@ document.addEventListener('DOMContentLoaded', () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            // System instruction tells Gemini who it is
             system_instruction: {
-              parts: [{
-                text: `You are A-Eye, an accessibility voice assistant built 
-                into the Chrome browser for blind and visually impaired users. 
-                You help users navigate the web, read page content, and perform 
-                browser actions entirely by voice. Be concise, warm, and clear.
-                Never use visual language like "as you can see" or "look at this".`
-              }]
+              parts: [{ text: SYSTEM_PROMPT }]
             },
             contents: geminiMessages
           })
@@ -220,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const data = await response.json();
 
-        // Check for API errors — wrong key, quota exceeded, etc.
         if (!data.candidates || !data.candidates[0]) {
           throw new Error(data.error?.message || 'No response from Gemini.');
         }
@@ -228,15 +198,9 @@ document.addEventListener('DOMContentLoaded', () => {
         responseText = data.candidates[0].content.parts[0].text;
       }
 
-      // Remove the "..." loading bubble now that we have a real response
       loadingDiv.remove();
-
-      // Add the AI's response to history for future context
       chatHistory.push({ role: 'assistant', content: responseText });
-
-      // Save the response so the repeat shortcut can re-speak it
       lastResponse = responseText;
-
       return responseText;
 
     } catch (err) {
@@ -250,175 +214,77 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
   // ══════════════════════════════════════════════════════════════════════
-  // 7. AI — INTENT ROUTER
-  // Instead of using brittle if/else keyword matching to decide what
-  // the user wants, we ask the AI to classify the intent first.
-  // The AI returns a structured JSON object telling us what action to take.
+  // 7. INTENT CLASSIFIER
+  // FIX #1 + #2: classifyIntent is now a single, top-level function.
+  // Previously it was (a) defined twice and (b) the local regex version
+  // was nested inside processVoiceInput, which was itself nested inside
+  // an outer processVoiceInput — causing nothing to work.
   //
-  // This is far more robust — it handles natural variations in language,
-  // e.g. "take a look at this page", "what's on screen", "describe this"
-  // all correctly map to the same action.
+  // Using fast local regex classification (no API call needed).
   // ══════════════════════════════════════════════════════════════════════
 
-  async function classifyIntent(text) {
-
-    // We make a SEPARATE lightweight AI call just for classification.
-    // We don't add this to chatHistory because it's a behind-the-scenes
-    // system call, not part of the user's conversation.
-
-    const prompt = `
-You are a browser command classifier. 
-Classify this user request into exactly one JSON object.
-
-User said: "${text}"
-
-Reply ONLY with a valid JSON object — no explanation, no markdown, no extra text.
-Use this exact format:
-
-{
-  "action": "one of: chat | navigate | read_page | screenshot | click | scroll | fill_form | search",
-  "target": "the relevant detail (URL, search query, element to click, scroll direction, etc.)",
-  "query": "the original text if action is chat or read_page"
-}
-
-Action definitions:
-- chat: general question or conversation with no browser action needed
-- navigate: go to a URL or search for something
-- read_page: read, summarise, or describe the current page content
-- screenshot: capture and describe what's on screen visually
-- click: click a link, button, or element by its label
-- scroll: scroll the page up or down
-- fill_form: fill in a form field or submit a form
-- search: search for something on the current page (Ctrl+F style)
-`;
-
-    try {
-      // Call the AI with just the classification prompt — no history needed
-      const tempHistory = chatHistory;
-      chatHistory = [];   // Temporarily clear so callAI sends a clean request
-
-      const raw = await callAI(prompt);
-
-      chatHistory = tempHistory;  // Restore the real history
-
-      if (!raw) return { action: 'chat', query: text };
-
-      // Strip markdown fences if the AI wrapped the JSON in ```
-      const cleaned = raw.replace(/```json|```/g, '').trim();
-      return JSON.parse(cleaned);
-
-    } catch (e) {
-      // If classification fails for any reason, fall back to plain chat
-      return { action: 'chat', query: text };
-    }
-  }
-
-
-  // ══════════════════════════════════════════════════════════════════════
-  // 8. PROCESS VOICE INPUT
-  // The main entry point after the user speaks.
-  // It classifies intent then routes to the right action function.
-  // ══════════════════════════════════════════════════════════════════════
-
-async function processVoiceInput(rawText) {
-    if (!rawText || !rawText.trim()) return;
-
-    log(`You: ${rawText}`, 'user');
-
-    // Reload settings fresh from storage every time
-    // This guarantees we always have the latest saved values
-    await new Promise((resolve) => {
-      chrome.storage.sync.get({
-        useLocalAI:    false,
-        cloudProvider: 'mistral',
-        geminiKey:     '',
-        geminiModel:   'gemini-2.0-flash',
-        mistralKey:    '',
-        mistralModel:  'mistral-small-latest',
-        ollamaUrl:     'http://localhost:11434',
-        ollamaModel:   'gemma3:4b',
-        voiceSpeed:    1.1,
-      }, (loaded) => {
-        settings = loaded;
-        resolve();
-      });
-    });
-
-    console.log('Processing with settings:', settings.cloudProvider, settings.mistralKey ? 'key exists' : 'NO KEY');
-
-    const hasKey = settings.useLocalAI || settings.geminiKey || settings.mistralKey;
-
-    if (!hasKey) {
-      speak('Please open settings and add your API key first.');
-      log('⚙️ Open Settings to add your API key.', 'system');
-      return;
-    }
-
-    // Rest of the function continues unchanged from here...
-    function classifyIntent(text) {
+  function classifyIntent(text) {
     const t = text.toLowerCase().trim();
 
-    // Navigation — "go to", "open", "search for"
     if (/^(go to|open|navigate to|take me to)\s+\S+/.test(t)) {
       const target = t.replace(/^(go to|open|navigate to|take me to)\s+/, '').trim();
       return { action: 'navigate', target };
     }
 
-    // Search — "search for X"
     if (/^search (for |up )?/.test(t)) {
       const target = t.replace(/^search (for |up )?/, '').trim();
       return { action: 'navigate', target };
     }
 
-    // Read page — "read", "summarise", "what is on this page"
     if (/read (this |the )?(page|article|content)|summari[sz]e|what('s| is) on this page|read page/.test(t)) {
       return { action: 'read_page' };
     }
 
-    // Screenshot — "capture", "describe screen", "what do you see"
     if (/capture|screenshot|describe (the |this )?screen|what('s| is) on (the |this )?screen|what do you see/.test(t)) {
       return { action: 'screenshot' };
     }
 
-    // Scroll — "scroll down/up"
     if (/scroll (down|up|to top|to bottom)/.test(t)) {
       const dir = t.includes('up') || t.includes('top') ? 'up' : 'down';
       return { action: 'scroll', target: dir };
     }
 
-    // Click — "click X", "press X", "select X"
     if (/^(click|press|select|tap|choose)\s+/.test(t)) {
       const target = t.replace(/^(click|press|select|tap|choose)\s+/, '').trim();
       return { action: 'click', target };
     }
 
-    // Fill form — "fill", "type", "enter", "submit"
     if (/fill (in |out )?|type .+ in|enter .+ in|submit (the )?form/.test(t)) {
       return { action: 'fill_form' };
     }
 
-    // Find on page — "find X on page", "search on page"
     if (/find .+ on (this |the )?page|search on page/.test(t)) {
       const target = t.replace(/find (.+) on (this |the )?page/, '$1').trim();
       return { action: 'search', target };
     }
 
-    // Default — treat as conversation
     return { action: 'chat', query: t };
   }
 
 
-  // ── PROCESS VOICE INPUT ───────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════
+  // 8. PROCESS VOICE INPUT
+  // FIX #1: Now a single, clean top-level function. Previously this was
+  // defined twice — once wrapping the other — so the switch/case logic
+  // for actions (navigate, click, scroll, etc.) was inside an inner
+  // copy that was never actually called, making all buttons silent.
+  // ══════════════════════════════════════════════════════════════════════
+
   async function processVoiceInput(rawText) {
     if (!rawText || !rawText.trim()) return;
 
     log(`You: ${rawText}`, 'user');
 
-    // Reload settings fresh every time to guarantee latest values
+    // Reload settings fresh from storage every time
     await new Promise((resolve) => {
       chrome.storage.sync.get({
         useLocalAI:    false,
-        cloudProvider: 'mistral',
+        cloudProvider: 'gemini',
         geminiKey:     '',
         geminiModel:   'gemini-2.0-flash',
         mistralKey:    '',
@@ -432,7 +298,6 @@ async function processVoiceInput(rawText) {
       });
     });
 
-    // Check a key exists for the chosen provider
     const hasKey = settings.useLocalAI
       ? !!settings.ollamaUrl
       : (settings.cloudProvider === 'mistral'
@@ -445,9 +310,7 @@ async function processVoiceInput(rawText) {
       return;
     }
 
-    // Classify intent locally — no API call needed
     const intent = classifyIntent(rawText);
-
     console.log('Intent:', intent.action, '| Text:', rawText);
 
     switch (intent.action) {
@@ -473,25 +336,23 @@ async function processVoiceInput(rawText) {
         await handleSearch(intent.target || rawText);
         break;
       case 'chat':
-      default:
+      default: {
         const response = await callAI(rawText);
         if (response) {
           log(response, 'ai');
           speak(response);
         }
         break;
+      }
     }
   }
 
+
   // ══════════════════════════════════════════════════════════════════════
   // 9. ACTION HANDLERS
-  // Each function below handles one specific type of browser action.
-  // They are all async because they involve waiting for browser APIs,
-  // network calls, or scripting results.
   // ══════════════════════════════════════════════════════════════════════
 
   // ── NAVIGATE ──────────────────────────────────────────────────────────
-  // Opens a URL directly or performs a Google search
   async function handleNavigate(target) {
     const isUrl = target.includes('.com') || target.includes('.org')
                   || target.includes('.net') || target.includes('http');
@@ -507,9 +368,6 @@ async function processVoiceInput(rawText) {
 
 
   // ── READ PAGE ─────────────────────────────────────────────────────────
-  // Extracts text from the current page and asks the AI to summarise it.
-  // chrome.scripting.executeScript() injects code directly into the
-  // active tab's page — this is how extensions read page content.
   async function handleReadPage() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -524,10 +382,6 @@ async function processVoiceInput(rawText) {
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => {
-          // This function runs INSIDE the webpage, not in the extension.
-          // It has access to the page's full DOM.
-
-          // Remove elements that are noise — nav, ads, footers etc.
           const noise = document.querySelectorAll(
             'nav, header, footer, aside, script, style, .ad, [aria-hidden="true"]'
           );
@@ -544,16 +398,12 @@ async function processVoiceInput(rawText) {
                                .filter(Boolean)
                                .join(' ');
 
-          return `Page title: ${document.title}. 
-                  Headings: ${headings}. 
-                  Content: ${paragraphs}`;
+          return `Page title: ${document.title}. Headings: ${headings}. Content: ${paragraphs}`;
         }
       });
 
       const pageText = results[0].result.substring(0, 5000);
-
-      // Ask the AI to summarise what it received from the page
-      const summary = await callAI(
+      const summary  = await callAI(
         `Please summarise this webpage content clearly and concisely for a 
          blind user. Focus on the main topic and key points:\n\n${pageText}`
       );
@@ -571,8 +421,6 @@ async function processVoiceInput(rawText) {
 
 
   // ── SCREENSHOT ────────────────────────────────────────────────────────
-  // Captures a screenshot and sends it to the AI for visual description.
-  // Useful for pages that are heavily image-based or have complex layouts.
   async function handleScreenshot(prompt) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -584,8 +432,6 @@ async function processVoiceInput(rawText) {
     speak('Capturing the screen...');
 
     try {
-      // captureVisibleTab takes a screenshot of what's currently visible.
-      // Returns a base64-encoded JPEG data URL.
       const dataUrl = await chrome.tabs.captureVisibleTab(
         tab.windowId,
         { format: 'jpeg', quality: 70 }
@@ -593,8 +439,6 @@ async function processVoiceInput(rawText) {
 
       log('Screenshot captured.', 'system', dataUrl);
 
-      // Screenshots can only be analysed by Gemini (vision model),
-      // not by text-only local models
       if (settings.useLocalAI) {
         speak('Screenshot analysis requires Cloud AI. Please switch to Gemini in settings.');
         return;
@@ -609,16 +453,15 @@ async function processVoiceInput(rawText) {
           contents: [{
             parts: [
               { text: `Describe this screenshot for a blind user. ${prompt}` },
-              // The image is sent as base64 inline data
               { inline_data: { mime_type: 'image/jpeg', data: dataUrl.split(',')[1] } }
             ]
           }]
         })
       });
 
-      const data     = await response.json();
-      const aiText   = data.candidates[0].content.parts[0].text;
-      lastResponse   = aiText;
+      const data   = await response.json();
+      const aiText = data.candidates[0].content.parts[0].text;
+      lastResponse = aiText;
 
       log(aiText, 'ai');
       speak(aiText);
@@ -631,8 +474,6 @@ async function processVoiceInput(rawText) {
 
 
   // ── CLICK ─────────────────────────────────────────────────────────────
-  // Finds an element on the page by its text label and clicks it.
-  // Uses a scoring system to find the best match.
   async function handleClick(targetText) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab.url || tab.url.startsWith('chrome://')) return;
@@ -640,25 +481,20 @@ async function processVoiceInput(rawText) {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (searchText) => {
-        const search = searchText.toLowerCase().trim();
-
-        // Get all clickable elements on the page
+        const search   = searchText.toLowerCase().trim();
         const elements = Array.from(document.querySelectorAll(
           'a, button, input[type="submit"], [role="button"], h3'
         ));
 
-        let bestMatch  = null;
-        let topScore   = 0;
+        let bestMatch = null;
+        let topScore  = 0;
 
         elements.forEach(el => {
-          // Skip hidden elements — they can't be clicked anyway
           if (el.getBoundingClientRect().width === 0) return;
 
           const elText = (el.innerText || '').toLowerCase();
           const aria   = (el.getAttribute('aria-label') || '').toLowerCase();
 
-          // Special Google Search result handling —
-          // Google wraps result titles in <h3> inside <a> tags
           if (el.tagName === 'H3') {
             const parent = el.closest('a');
             if (parent && elText.includes(search)) {
@@ -668,7 +504,6 @@ async function processVoiceInput(rawText) {
             }
           }
 
-          // Scoring: exact match = 100pts, partial match = 60pts
           let score = 0;
           if (elText === search || aria === search) score = 100;
           else if (elText.includes(search) || aria.includes(search)) score = 60;
@@ -680,11 +515,8 @@ async function processVoiceInput(rawText) {
         });
 
         if (bestMatch) {
-          // Highlight the element so sighted helpers can see what was clicked
           bestMatch.style.outline = '4px solid yellow';
           bestMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-          // Small delay before clicking so scroll can settle
           setTimeout(() => bestMatch.click(), 500);
           return true;
         }
@@ -706,11 +538,8 @@ async function processVoiceInput(rawText) {
 
 
   // ── SCROLL ────────────────────────────────────────────────────────────
-  // Scrolls the active page up or down
   async function handleScroll(direction) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    // Negative = scroll up, Positive = scroll down
     const amount = direction.includes('up') ? -600 : 600;
 
     await chrome.scripting.executeScript({
@@ -724,8 +553,6 @@ async function processVoiceInput(rawText) {
 
 
   // ── FILL FORM ─────────────────────────────────────────────────────────
-  // Finds form fields on the page and fills them.
-  // Asks the AI to figure out what field maps to what value.
   async function handleFillForm(instruction) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab.url || tab.url.startsWith('chrome://')) return;
@@ -733,16 +560,10 @@ async function processVoiceInput(rawText) {
     speak('Looking at the form...');
 
     try {
-      // First, scan the page to find what form fields exist
       const scanResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => {
-          const fields = Array.from(
-            document.querySelectorAll('input, textarea, select')
-          );
-
-          // Return a description of each visible field
-          return fields
+          return Array.from(document.querySelectorAll('input, textarea, select'))
             .filter(f => f.type !== 'hidden' && f.getBoundingClientRect().width > 0)
             .map(f => ({
               name:        f.name        || '',
@@ -760,7 +581,6 @@ async function processVoiceInput(rawText) {
         return;
       }
 
-      // Ask the AI what value goes in which field based on the user's instruction
       const fieldList  = fields.map(f =>
         `name="${f.name}" placeholder="${f.placeholder}" type="${f.type}"`
       ).join('\n');
@@ -780,11 +600,9 @@ async function processVoiceInput(rawText) {
 
       if (!aiResponse) return;
 
-      // Parse the JSON the AI returned
-      const cleaned      = aiResponse.replace(/```json|```/g, '').trim();
+      const cleaned          = aiResponse.replace(/```json|```/g, '').trim();
       const fillInstructions = JSON.parse(cleaned);
 
-      // Execute the fill instructions inside the page
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: (instructions) => {
@@ -792,8 +610,7 @@ async function processVoiceInput(rawText) {
             const el = document.querySelector(selector);
             if (el) {
               el.value = value;
-              // Trigger input event so the page's JavaScript knows the value changed
-              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('input',  { bubbles: true }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
             }
           });
@@ -812,7 +629,6 @@ async function processVoiceInput(rawText) {
 
 
   // ── SEARCH ON PAGE ────────────────────────────────────────────────────
-  // Uses the browser's built-in find-in-page (like Ctrl+F)
   async function handleSearch(query) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -828,9 +644,6 @@ async function processVoiceInput(rawText) {
 
   // ══════════════════════════════════════════════════════════════════════
   // 10. VOICE INPUT — WEB SPEECH API
-  // Uses the browser's built-in speech recognition.
-  // continuous: true means it keeps listening after each phrase,
-  // instead of stopping after one sentence.
   // ══════════════════════════════════════════════════════════════════════
 
   function startListening() {
@@ -844,40 +657,34 @@ async function processVoiceInput(rawText) {
     try {
       recognition                = new SpeechRecognition();
       recognition.lang           = 'en-US';
-      recognition.continuous     = true;   // Keep listening after each result
-      recognition.interimResults = false;  // Only give us final, confirmed results
+      recognition.continuous     = true;
+      recognition.interimResults = false;
 
       recognition.onstart = () => {
-        isListening           = true;
-        micBtn.textContent    = '🛑 Stop Listening';
+        isListening             = true;
+        micBtn.textContent      = '🛑 Stop Listening';
         micBtn.style.background = '#dc3545';
         log('Listening...', 'system');
       };
 
       recognition.onresult = (event) => {
-        // event.results is a list of all results so far this session.
-        // We only want the latest one, which is always the last item.
         const latest = event.results[event.results.length - 1];
         const text   = latest[0].transcript.trim();
 
         if (text) {
-          input.value = text;   // Show what was heard in the text box
+          input.value = text;
           processVoiceInput(text);
         }
       };
 
       recognition.onerror = (event) => {
-        // 'not-allowed' means the user denied microphone permission
         if (event.error === 'not-allowed') {
           stopListening();
           chrome.tabs.create({ url: chrome.runtime.getURL('permission.html') });
         }
-        // Other errors (network, no-speech) are temporary — don't stop listening
       };
 
       recognition.onend = () => {
-        // If we're supposed to still be listening, restart automatically.
-        // The Web Speech API stops itself after silence — this restarts it.
         if (isListening) {
           recognition.start();
         } else {
@@ -907,15 +714,13 @@ async function processVoiceInput(rawText) {
 
   // ══════════════════════════════════════════════════════════════════════
   // 11. AI MODE TOGGLE
-  // Switches between Cloud (Gemini) and Local (Ollama) and saves the
-  // preference immediately to storage.
   // ══════════════════════════════════════════════════════════════════════
 
   function toggleAIMode() {
     settings.useLocalAI = !settings.useLocalAI;
     chrome.storage.sync.set({ useLocalAI: settings.useLocalAI });
 
-    const mode        = settings.useLocalAI ? 'Local AI (Ollama)' : 'Cloud AI (Gemini)';
+    const mode            = settings.useLocalAI ? 'Local AI (Ollama)' : 'Cloud AI';
     modeLabel.textContent = settings.useLocalAI ? 'Local AI' : 'Cloud AI';
 
     log(`Switched to ${mode}`, 'system');
@@ -925,15 +730,10 @@ async function processVoiceInput(rawText) {
 
   // ══════════════════════════════════════════════════════════════════════
   // 12. EVENT LISTENERS
-  // Connects UI elements and keyboard shortcuts to their functions.
-  // All event binding happens here at the bottom, after all functions
-  // are defined — this is a clean pattern that avoids hoisting issues.
   // ══════════════════════════════════════════════════════════════════════
 
-  // Mic button click
   micBtn.addEventListener('click', toggleListening);
 
-  // Send button — lets user type a command manually instead of speaking
   sendBtn.addEventListener('click', () => {
     const text = input.value.trim();
     if (text) {
@@ -942,7 +742,6 @@ async function processVoiceInput(rawText) {
     }
   });
 
-  // Enter key in the text box
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       const text = input.value.trim();
@@ -953,12 +752,10 @@ async function processVoiceInput(rawText) {
     }
   });
 
-  // Settings button — opens the settings page as a new tab
   settingsBtn.addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
   });
 
-  // Keyboard shortcuts defined in manifest.json
   chrome.commands.onCommand.addListener((command) => {
     if (command === 'toggle-voice')    toggleListening();
     if (command === 'repeat-response') speak(lastResponse);
