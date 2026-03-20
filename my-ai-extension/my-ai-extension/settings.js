@@ -1,79 +1,97 @@
 // settings.js
-// Handles saving and loading all settings from Chrome's storage.
-// chrome.storage.sync stores data tied to the user's Google account —
-// it syncs across all their Chrome browsers automatically.
 
-// ── Get references to every element we need ───────────────────────────────
-const toggleLocal  = document.getElementById('toggle-local');
-const cloudSection = document.getElementById('cloud-section');
-const localSection = document.getElementById('local-section');
-const geminiKey    = document.getElementById('gemini-key');
-const geminiModel  = document.getElementById('gemini-model');
-const ollamaUrl    = document.getElementById('ollama-url');
-const ollamaModel  = document.getElementById('ollama-model');
-const voiceSpeed   = document.getElementById('voice-speed');
-const speedDisplay = document.getElementById('speed-display');
-const btnSave      = document.getElementById('btn-save');
-const statusEl     = document.getElementById('status');
+const toggleLocal    = document.getElementById('toggle-local');
+const cloudSection   = document.getElementById('cloud-section');
+const localSection   = document.getElementById('local-section');
+const cloudProvider  = document.getElementById('cloud-provider');
+const geminiFields   = document.getElementById('gemini-fields');
+const mistralFields  = document.getElementById('mistral-fields');
+const geminiKey      = document.getElementById('gemini-key');
+const geminiModel    = document.getElementById('gemini-model');
+const mistralKey     = document.getElementById('mistral-key');
+const mistralModel   = document.getElementById('mistral-model');
+const ollamaUrl      = document.getElementById('ollama-url');
+const ollamaModel    = document.getElementById('ollama-model');
+const voiceSpeed     = document.getElementById('voice-speed');
+const speedDisplay   = document.getElementById('speed-display');
+const btnSave        = document.getElementById('btn-save');
+const statusEl       = document.getElementById('status');
 
 
-// ── Show / hide the right AI section based on the toggle ─────────────────
-// This runs every time the toggle changes, and also on page load.
+// ── Show/hide local vs cloud sections ────────────────────────────────────
 function updateSections() {
   if (toggleLocal.checked) {
-    // User wants local AI — show Ollama fields, hide Gemini fields
     localSection.style.display = 'block';
     cloudSection.style.display = 'none';
   } else {
-    // User wants cloud AI — show Gemini fields, hide Ollama fields
     cloudSection.style.display = 'block';
     localSection.style.display = 'none';
   }
 }
 
+// ── Show/hide Gemini vs Mistral fields ───────────────────────────────────
+// Runs whenever the provider dropdown changes
+function updateProviderFields() {
+  if (cloudProvider.value === 'mistral') {
+    mistralFields.style.display = 'block';
+    geminiFields.style.display  = 'none';
+  } else {
+    geminiFields.style.display  = 'block';
+    mistralFields.style.display = 'none';
+  }
+}
+
 toggleLocal.addEventListener('change', updateSections);
+cloudProvider.addEventListener('change', updateProviderFields);
 
 
-// ── Update the speed number as the slider moves ───────────────────────────
-// This gives the user live feedback while dragging the slider.
+// ── Live speed display ───────────────────────────────────────────────────
 voiceSpeed.addEventListener('input', () => {
   speedDisplay.textContent = parseFloat(voiceSpeed.value).toFixed(1) + 'x';
 });
 
 
-// ── LOAD saved settings when the page opens ───────────────────────────────
-// chrome.storage.sync.get() reads from storage.
-// The object passed in provides DEFAULT values if nothing is saved yet.
-// This means first-time users get sensible defaults automatically.
+// ── LOAD saved settings ──────────────────────────────────────────────────
 chrome.storage.sync.get({
-  useLocalAI:   false,
-  geminiKey:    '',
-  geminiModel:  'gemini-2.0-flash',
-  ollamaUrl:    'http://localhost:11434',
-  ollamaModel:  'gemma3:4b',
-  voiceSpeed:   1.1,
-}, (settings) => {
-  // Populate every field with whatever was saved
-  toggleLocal.checked      = settings.useLocalAI;
-  geminiKey.value          = settings.geminiKey;
-  geminiModel.value        = settings.geminiModel;
-  ollamaUrl.value          = settings.ollamaUrl;
-  ollamaModel.value        = settings.ollamaModel;
-  voiceSpeed.value         = settings.voiceSpeed;
-  speedDisplay.textContent = parseFloat(settings.voiceSpeed).toFixed(1) + 'x';
+  useLocalAI:    false,
+  cloudProvider: 'gemini',
+  geminiKey:     '',
+  geminiModel:   'gemini-2.0-flash',
+  mistralKey:    '',
+  mistralModel:  'mistral-small-latest',
+  ollamaUrl:     'http://localhost:11434',
+  ollamaModel:   'gemma3:4b',
+  voiceSpeed:    1.1,
+}, (s) => {
+  toggleLocal.checked    = s.useLocalAI;
+  cloudProvider.value    = s.cloudProvider;
+  geminiKey.value        = s.geminiKey;
+  geminiModel.value      = s.geminiModel;
+  mistralKey.value       = s.mistralKey;
+  mistralModel.value     = s.mistralModel;
+  ollamaUrl.value        = s.ollamaUrl;
+  ollamaModel.value      = s.ollamaModel;
+  voiceSpeed.value       = s.voiceSpeed;
+  speedDisplay.textContent = parseFloat(s.voiceSpeed).toFixed(1) + 'x';
 
-  // Update which section is visible based on loaded setting
   updateSections();
+  updateProviderFields();
 });
 
 
-// ── SAVE settings when the button is clicked ──────────────────────────────
+// ── SAVE settings ────────────────────────────────────────────────────────
 btnSave.addEventListener('click', () => {
 
-  // Basic validation — make sure the right key is filled in
-  if (!toggleLocal.checked && !geminiKey.value.trim()) {
-    showStatus('Please enter your Gemini API key.', 'err');
-    return;
+  // Validate — make sure the right key is filled for the chosen provider
+  if (!toggleLocal.checked) {
+    if (cloudProvider.value === 'gemini' && !geminiKey.value.trim()) {
+      showStatus('Please enter your Gemini API key.', 'err');
+      return;
+    }
+    if (cloudProvider.value === 'mistral' && !mistralKey.value.trim()) {
+      showStatus('Please enter your Mistral API key.', 'err');
+      return;
+    }
   }
 
   if (toggleLocal.checked && !ollamaUrl.value.trim()) {
@@ -81,32 +99,28 @@ btnSave.addEventListener('click', () => {
     return;
   }
 
-  // Build the settings object to save
   const settings = {
-    useLocalAI:  toggleLocal.checked,
-    geminiKey:   geminiKey.value.trim(),
-    geminiModel: geminiModel.value,
-    ollamaUrl:   ollamaUrl.value.trim(),
-    ollamaModel: ollamaModel.value.trim(),
-    voiceSpeed:  parseFloat(voiceSpeed.value),
+    useLocalAI:    toggleLocal.checked,
+    cloudProvider: cloudProvider.value,
+    geminiKey:     geminiKey.value.trim(),
+    geminiModel:   geminiModel.value,
+    mistralKey:    mistralKey.value.trim(),
+    mistralModel:  mistralModel.value,
+    ollamaUrl:     ollamaUrl.value.trim(),
+    ollamaModel:   ollamaModel.value.trim(),
+    voiceSpeed:    parseFloat(voiceSpeed.value),
   };
 
-  // chrome.storage.sync.set() writes to storage.
-  // The callback runs after the save is confirmed complete.
   chrome.storage.sync.set(settings, () => {
     showStatus('Settings saved!', 'ok');
   });
 });
 
 
-// ── Helper: show a status message that fades out ──────────────────────────
-// This is a small reusable function — instead of repeating the same
-// 4 lines every time you want to show a message, you call this once.
+// ── Status toast ─────────────────────────────────────────────────────────
 function showStatus(message, type) {
-  statusEl.textContent  = message;
-  statusEl.className    = type === 'ok' ? 'status-ok' : 'status-err';
-
-  // After 3 seconds, clear the message
+  statusEl.textContent = message;
+  statusEl.className   = type === 'ok' ? 'status-ok' : 'status-err';
   setTimeout(() => {
     statusEl.textContent = '';
     statusEl.className   = '';
