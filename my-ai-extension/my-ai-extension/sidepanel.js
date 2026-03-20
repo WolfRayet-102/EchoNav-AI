@@ -53,12 +53,13 @@ document.addEventListener('DOMContentLoaded', () => {
     modeLabel.textContent = settings.useLocalAI ? 'Local AI' : 'Cloud AI';
 
     // Warn the user if no API key has been set yet
-    if (!settings.useLocalAI && !settings.geminiKey) {
-      log('⚙️ No API key found. Click Settings and add your Gemini key.', 'system');
+    const hasKey = settings.useLocalAI || settings.geminiKey || settings.mistralKey;
+
+    if (!hasKey) {
+        log('⚙️ No API key found. Click Settings to add your Mistral or Gemini key.', 'system');
     } else {
-      log('Ready. Click the mic button or press Alt+Shift+2 to speak.', 'system');
+        log('Ready. Click the mic button or press Alt+Shift+2 to speak.', 'system');
     }
-  });
 
 
   // ══════════════════════════════════════════════════════════════════════
@@ -314,10 +315,12 @@ Action definitions:
     log(`You: ${rawText}`, 'user');
 
     // Check settings are loaded before doing anything
-    if (!settings.useLocalAI && !settings.geminiKey) {
-      speak('Please open settings and add your Gemini API key first.');
-      log('⚙️ Open Settings to add your API key.', 'system');
-      return;
+    const hasKey = settings.useLocalAI || settings.geminiKey || settings.mistralKey;
+
+    if (!hasKey) {
+        speak('Please open settings and add your API key first.');
+        log('⚙️ Open Settings to add your API key.', 'system');
+    return;
     }
 
     // Ask the AI what the user wants to do
@@ -850,3 +853,4 @@ Action definitions:
   });
 
 });
+})
