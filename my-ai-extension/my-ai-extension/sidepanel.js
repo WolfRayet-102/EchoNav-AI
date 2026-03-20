@@ -355,7 +355,100 @@ async function processVoiceInput(rawText) {
     }
 
     // Rest of the function continues unchanged from here...
-    const intent = await classifyIntent(rawText);
+    function classifyIntent(text) {
+    const t = text.toLowerCase().trim();
+
+    // Navigation — "go to", "open", "search for"
+    if (/^(go to|open|navigate to|take me to)\s+\S+/.test(t)) {
+      const target = t.replace(/^(go to|open|navigate to|take me to)\s+/, '').trim();
+      return { action: 'navigate', target };
+    }
+
+    // Search — "search for X"
+    if (/^search (for |up )?/.test(t)) {
+      const target = t.replace(/^search (for |up )?/, '').trim();
+      return { action: 'navigate', target };
+    }
+
+    // Read page — "read", "summarise", "what is on this page"
+    if (/read (this |the )?(page|article|content)|summari[sz]e|what('s| is) on this page|read page/.test(t)) {
+      return { action: 'read_page' };
+    }
+
+    // Screenshot — "capture", "describe screen", "what do you see"
+    if (/capture|screenshot|describe (the |this )?screen|what('s| is) on (the |this )?screen|what do you see/.test(t)) {
+      return { action: 'screenshot' };
+    }
+
+    // Scroll — "scroll down/up"
+    if (/scroll (down|up|to top|to bottom)/.test(t)) {
+      const dir = t.includes('up') || t.includes('top') ? 'up' : 'down';
+      return { action: 'scroll', target: dir };
+    }
+
+    // Click — "click X", "press X", "select X"
+    if (/^(click|press|select|tap|choose)\s+/.test(t)) {
+      const target = t.replace(/^(click|press|select|tap|choose)\s+/, '').trim();
+      return { action: 'click', target };
+    }
+
+    // Fill form — "fill", "type", "enter", "submit"
+    if (/fill (in |out )?|type .+ in|enter .+ in|submit (the )?form/.test(t)) {
+      return { action: 'fill_form' };
+    }
+
+    // Find on page — "find X on page", "search on page"
+    if (/find .+ on (this |the )?page|search on page/.test(t)) {
+      const target = t.replace(/find (.+) on (this |the )?page/, '$1').trim();
+      return { action: 'search', target };
+    }
+
+    // Default — treat as conversation
+    return { action: 'chat', query: t };
+  }
+
+
+  // ── PROCESS VOICE INPUT ───────────────────────────────────────────────
+  async function processVoiceInput(rawText) {
+    if (!rawText || !rawText.trim()) return;
+
+    log(`You: ${rawText}`, 'user');
+
+    // Reload settings fresh every time to guarantee latest values
+    await new Promise((resolve) => {
+      chrome.storage.sync.get({
+        useLocalAI:    false,
+        cloudProvider: 'mistral',
+        geminiKey:     '',
+        geminiModel:   'gemini-2.0-flash',
+        mistralKey:    '',
+        mistralModel:  'mistral-small-latest',
+        ollamaUrl:     'http://localhost:11434',
+        ollamaModel:   'gemma3:4b',
+        voiceSpeed:    1.1,
+      }, (loaded) => {
+        settings = loaded;
+        resolve();
+      });
+    });
+
+    // Check a key exists for the chosen provider
+    const hasKey = settings.useLocalAI
+      ? !!settings.ollamaUrl
+      : (settings.cloudProvider === 'mistral'
+          ? !!settings.mistralKey
+          : !!settings.geminiKey);
+
+    if (!hasKey) {
+      speak('Please open settings and add your API key first.');
+      log('⚙️ Open Settings to add your API key.', 'system');
+      return;
+    }
+
+    // Classify intent locally — no API call needed
+    const intent = classifyIntent(rawText);
+
+    console.log('Intent:', intent.action, '| Text:', rawText);
 
     switch (intent.action) {
       case 'navigate':
@@ -389,7 +482,6 @@ async function processVoiceInput(rawText) {
         break;
     }
   }
-
 
   // ══════════════════════════════════════════════════════════════════════
   // 9. ACTION HANDLERS
