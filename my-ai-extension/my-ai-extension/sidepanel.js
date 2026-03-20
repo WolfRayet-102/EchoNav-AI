@@ -112,11 +112,14 @@ document.addEventListener('DOMContentLoaded', () => {
     chat.appendChild(loadingDiv);
     chat.scrollTop = chat.scrollHeight;
 
-    const SYSTEM_PROMPT = `You are A-Eye, an accessibility voice assistant built 
-    into the Chrome browser for blind and visually impaired users. 
-    You help users navigate the web, read page content, and perform 
-    browser actions entirely by voice. Be concise, warm, and clear. 
-    Never use visual language like "as you can see" or "look at this".`;
+    const SYSTEM_PROMPT = `You are A-Eye, an accessibility voice assistant built into Chrome for blind and visually impaired users.
+    You help users navigate the web, read page content, and perform browser actions by voice.
+    Be concise, warm, and clear. Never use visual language like "as you can see" or "look at this".
+    CRITICAL: Never say you are "going to" do something or pretend to perform browser actions.
+    You are only used for conversation. All real browser actions (reading pages, clicking, scrolling,
+    navigating, taking screenshots) are handled by separate code — never by you. If the user asks
+    you to read a page or perform a browser action and you somehow receive that message,
+    reply with: "I'll do that now." — nothing else.`;
 
     try {
       let responseText = '';
@@ -215,54 +218,106 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ══════════════════════════════════════════════════════════════════════
   // 7. INTENT CLASSIFIER
-  // FIX #1 + #2: classifyIntent is now a single, top-level function.
-  // Previously it was (a) defined twice and (b) the local regex version
-  // was nested inside processVoiceInput, which was itself nested inside
-  // an outer processVoiceInput — causing nothing to work.
+  // Patterns are now broad enough to catch conversational phrasing like
+  // "can you read the browser tab", "what's on screen", "yes please" etc.
   //
-  // Using fast local regex classification (no API call needed).
+  // Also tracks lastAction so follow-up replies ("yes", "sure", "please")
+  // correctly repeat the last real action instead of going to chat.
   // ══════════════════════════════════════════════════════════════════════
+
+  // Tracks the last real action so follow-ups like "yes please" work
+  let lastAction = null;
 
   function classifyIntent(text) {
     const t = text.toLowerCase().trim();
 
-    if (/^(go to|open|navigate to|take me to)\s+\S+/.test(t)) {
-      const target = t.replace(/^(go to|open|navigate to|take me to)\s+/, '').trim();
+    // ── Context-aware follow-ups ──────────────────────────────────────
+    // If the user says "yes/sure/please" after a real action, redo it.
+    const isAffirmative = /^(yes|yeah|yep|sure|ok|okay|please|go ahead|do it|of course|absolutely|yup)(\s*[,!.]*\s*(please)?)?$/.test(t);
+    const isNegative    = /^(no|nope|nah|cancel|stop|never mind|don\'t|dont)[,!.\s]*$/.test(t);
+
+    if (isAffirmative && lastAction) {
+      return { action: lastAction };
+    }
+    if (isNegative) {
+      lastAction = null;
+      return { action: 'chat', query: t };
+    }
+
+    // ── NAVIGATE ──────────────────────────────────────────────────────
+    if (/\b(go to|navigate to|take me to|visit|load)\b/.test(t) ||
+        /^open\s+\S+/.test(t)) {
+      const target = t.replace(/^.*(go to|navigate to|take me to|visit|load|open)\s+/, '').trim();
+      lastAction = null;
       return { action: 'navigate', target };
     }
 
-    if (/^search (for |up )?/.test(t)) {
-      const target = t.replace(/^search (for |up )?/, '').trim();
+    if (/^search (for |up |the web for )?\S/.test(t)) {
+      const target = t.replace(/^search (for |up |the web for )?/, '').trim();
+      lastAction = null;
       return { action: 'navigate', target };
     }
 
-    if (/read (this |the )?(page|article|content)|summari[sz]e|what('s| is) on this page|read page/.test(t)) {
+    // ── READ PAGE ─────────────────────────────────────────────────────
+    // Catches: "read the page/tab/article", "can you read the browser tab",
+    //          "what's on this page", "summarise this", "what does it say"
+    if (/\b(read|reading)\b.{0,30}\b(page|tab|article|site|website|content|browser)\b/.test(t) ||
+        /\b(read|summarise|summarize|describe|explain)\b.{0,20}\b(this|the|current)\b/.test(t) ||
+        /what(\'s| is).{0,20}\b(on this|on the|this page|the page)\b/.test(t) ||
+        /what does (it|this|the page) say/.test(t) ||
+        /\bread (me )?(out|aloud|page|tab)\b/.test(t) ||
+        /\bsummari[sz]e\b/.test(t) ||
+        /\bread (this |the )?(page|article|content|tab)\b/.test(t)) {
+      lastAction = 'read_page';
       return { action: 'read_page' };
     }
 
-    if (/capture|screenshot|describe (the |this )?screen|what('s| is) on (the |this )?screen|what do you see/.test(t)) {
+    // ── SCREENSHOT ────────────────────────────────────────────────────
+    // Catches: "take a screenshot", "what do you see", "describe the screen"
+    if (/\b(screenshot|capture|snap)\b/.test(t) ||
+        /\bdescribe.{0,20}\b(screen|what(\'s| is))\b/.test(t) ||
+        /what(\'s| is).{0,20}\b(on (the |my |this )?screen)\b/.test(t) ||
+        /what do you see/.test(t) ||
+        /\bcan you see\b/.test(t)) {
+      lastAction = 'screenshot';
       return { action: 'screenshot' };
     }
 
-    if (/scroll (down|up|to top|to bottom)/.test(t)) {
-      const dir = t.includes('up') || t.includes('top') ? 'up' : 'down';
+    // ── SCROLL ────────────────────────────────────────────────────────
+    if (/\bscroll\b.{0,20}\b(down|up|top|bottom|end)\b/.test(t) ||
+        /\b(scroll down|scroll up|go down|go up|page down|page up)\b/.test(t)) {
+      const dir = /\b(up|top)\b/.test(t) ? 'up' : 'down';
+      lastAction = null;
       return { action: 'scroll', target: dir };
     }
 
-    if (/^(click|press|select|tap|choose)\s+/.test(t)) {
-      const target = t.replace(/^(click|press|select|tap|choose)\s+/, '').trim();
+    // ── CLICK ─────────────────────────────────────────────────────────
+    if (/^(click|press|select|tap|choose|hit)\s+/.test(t) ||
+        /\b(click|press|tap)\b.{0,15}\b(on|the)\b/.test(t)) {
+      const target = t.replace(/^.*(click on|press|select|tap|choose|hit|click)\s+(on |the )?/, '').trim();
+      lastAction = null;
       return { action: 'click', target };
     }
 
-    if (/fill (in |out )?|type .+ in|enter .+ in|submit (the )?form/.test(t)) {
+    // ── FILL FORM ─────────────────────────────────────────────────────
+    if (/\b(fill|type|enter|input|put|write)\b.{0,20}\b(form|field|box|input|search bar|text box)\b/.test(t) ||
+        /\bsubmit (the |this )?form\b/.test(t) ||
+        /\btype .+ (in|into)\b/.test(t)) {
+      lastAction = null;
       return { action: 'fill_form' };
     }
 
-    if (/find .+ on (this |the )?page|search on page/.test(t)) {
-      const target = t.replace(/find (.+) on (this |the )?page/, '$1').trim();
+    // ── FIND ON PAGE ──────────────────────────────────────────────────
+    if (/\bfind\b.+\bon (this |the )?page\b/.test(t) ||
+        /\bsearch (on|within|this) page\b/.test(t) ||
+        /\blook for\b.+\bon (this |the )?page\b/.test(t)) {
+      const target = t.replace(/\b(find|look for)\s+/, '').replace(/\bon (this |the )?page\b.*/, '').trim();
+      lastAction = null;
       return { action: 'search', target };
     }
 
+    // ── DEFAULT: chat ──────────────────────────────────────────────────
+    lastAction = null;
     return { action: 'chat', query: t };
   }
 
