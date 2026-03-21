@@ -869,4 +869,4 @@ document.addEventListener('DOMContentLoaded', () => {
     if (command === 'toggle-ai-mode')  toggleAIMode();
   });
 
-});
+});   
