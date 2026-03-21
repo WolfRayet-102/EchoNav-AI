@@ -284,10 +284,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ── SCROLL ────────────────────────────────────────────────────────
-    if (/\bscroll\b.{0,20}\b(down|up|top|bottom|end)\b/.test(t) ||
-        /\b(scroll down|scroll up|go down|go up|page down|page up)\b/.test(t)) {
-      const dir = /\b(up|top)\b/.test(t) ? 'up' : 'down';
-      lastAction = null;
+    // Catches: "scroll down", "scroll up", "go down", "scroll the page down",
+    //          "can you scroll down please", "move down", "page down"
+    if (/scroll/.test(t) || /\b(go down|go up|move down|move up|page down|page up)\b/.test(t)) {
+      const dir = /\b(up|top|upward|upwards|back up)\b/.test(t) ? 'up' : 'down';
+      lastAction = 'scroll_' + dir;
       return { action: 'scroll', target: dir };
     }
 
@@ -617,15 +618,48 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── SCROLL ────────────────────────────────────────────────────────────
   async function handleScroll(direction) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    if (!tab.url || tab.url.startsWith('chrome://')) {
+      speak('I cannot scroll system pages.');
+      return;
+    }
+
     const amount = direction.includes('up') ? -600 : 600;
 
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (px) => window.scrollBy({ top: px, behavior: 'smooth' }),
+      func: (px) => {
+        // Strategy 1: scroll the window (works on most simple pages)
+        window.scrollBy({ top: px, behavior: 'smooth' });
+
+        // Strategy 2: scroll the largest scrollable element on the page.
+        // Many modern sites (Gmail, Twitter, etc.) use a div container
+        // rather than the window itself, so window.scrollBy does nothing.
+        const allElements = Array.from(document.querySelectorAll('*'));
+        let bestEl     = null;
+        let bestHeight = 0;
+
+        allElements.forEach(el => {
+          const style     = window.getComputedStyle(el);
+          const overflowY = style.overflowY;
+          const isScrollable = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+          const hasScroll    = el.scrollHeight > el.clientHeight + 5;
+
+          if (isScrollable && hasScroll && el.clientHeight > bestHeight) {
+            bestHeight = el.clientHeight;
+            bestEl     = el;
+          }
+        });
+
+        if (bestEl && bestEl !== document.documentElement && bestEl !== document.body) {
+          bestEl.scrollBy({ top: px, behavior: 'smooth' });
+        }
+      },
       args: [amount]
     });
 
     speak(`Scrolling ${direction}`);
+    log(`Scrolled ${direction}.`, 'system');
   }
 
 
