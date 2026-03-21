@@ -225,16 +225,17 @@ document.addEventListener('DOMContentLoaded', () => {
   // correctly repeat the last real action instead of going to chat.
   // ══════════════════════════════════════════════════════════════════════
 
-  // Tracks the last real action so follow-ups like "yes please" work
+  // Tracks the last real action so follow-ups like "yes" or "yeah" work
   let lastAction = null;
 
   function classifyIntent(text) {
     const t = text.toLowerCase().trim();
 
     // ── Context-aware follow-ups ──────────────────────────────────────
-    // If the user says "yes/sure/please" after a real action, redo it.
-    const isAffirmative = /^(yes|yeah|yep|sure|ok|okay|please|go ahead|do it|of course|absolutely|yup)(\s*[,!.]*\s*(please)?)?$/.test(t);
-    const isNegative    = /^(no|nope|nah|cancel|stop|never mind|don\'t|dont)[,!.\s]*$/.test(t);
+    // Only bare yes/no words trigger this — NOT sentences that happen to
+    // contain "please" or "ok", which caused normal commands to be swallowed.
+    const isAffirmative = /^(yes|yeah|yep|sure|ok|okay|go ahead|do it|of course|absolutely|yup)$/.test(t);
+    const isNegative    = /^(no|nope|nah|cancel|stop|never mind)$/.test(t);
 
     if (isAffirmative && lastAction) {
       return { action: lastAction };
@@ -259,36 +260,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ── READ PAGE ─────────────────────────────────────────────────────
-    // Catches: "read the page/tab/article", "can you read the browser tab",
-    //          "what's on this page", "summarise this", "what does it say"
     if (/\b(read|reading)\b.{0,30}\b(page|tab|article|site|website|content|browser)\b/.test(t) ||
-        /\b(read|summarise|summarize|describe|explain)\b.{0,20}\b(this|the|current)\b/.test(t) ||
+        /\b(summarise|summarize)\b/.test(t) ||
         /what(\'s| is).{0,20}\b(on this|on the|this page|the page)\b/.test(t) ||
         /what does (it|this|the page) say/.test(t) ||
         /\bread (me )?(out|aloud|page|tab)\b/.test(t) ||
-        /\bsummari[sz]e\b/.test(t) ||
         /\bread (this |the )?(page|article|content|tab)\b/.test(t)) {
       lastAction = 'read_page';
       return { action: 'read_page' };
     }
 
     // ── SCREENSHOT ────────────────────────────────────────────────────
-    // Catches: "take a screenshot", "what do you see", "describe the screen"
     if (/\b(screenshot|capture|snap)\b/.test(t) ||
-        /\bdescribe.{0,20}\b(screen|what(\'s| is))\b/.test(t) ||
+        /\bdescribe.{0,20}\bscreen\b/.test(t) ||
         /what(\'s| is).{0,20}\b(on (the |my |this )?screen)\b/.test(t) ||
-        /what do you see/.test(t) ||
-        /\bcan you see\b/.test(t)) {
+        /\bwhat do you see\b/.test(t)) {
       lastAction = 'screenshot';
       return { action: 'screenshot' };
     }
 
     // ── SCROLL ────────────────────────────────────────────────────────
-    // Catches: "scroll down", "scroll up", "go down", "scroll the page down",
-    //          "can you scroll down please", "move down", "page down"
-    if (/scroll/.test(t) || /\b(go down|go up|move down|move up|page down|page up)\b/.test(t)) {
-      const dir = /\b(up|top|upward|upwards|back up)\b/.test(t) ? 'up' : 'down';
-      lastAction = 'scroll_' + dir;
+    // FIX: lastAction now stores 'scroll' not 'scroll_down' — the switch
+    // case is 'scroll' so it must match exactly.
+    if (/\bscroll\b/.test(t) || /\b(go down|go up|move down|move up|page down|page up)\b/.test(t)) {
+      const dir = /\b(up|top|upward|upwards)\b/.test(t) ? 'up' : 'down';
+      lastAction = 'scroll';
       return { action: 'scroll', target: dir };
     }
 
